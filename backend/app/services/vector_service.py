@@ -56,6 +56,42 @@ def _embed_chunks(chunks: Sequence[PDFChunk]) -> list[list[float]]:
     return embeddings
 
 
+def search_document_chunks(
+    query: str,
+    match_count: int = 5,
+    document_title: str | None = None,
+    page_number: int | None = None,
+) -> list[dict[str, object]]:
+    response = _gemini.models.embed_content(
+        model=_EMBEDDING_MODEL,
+        contents=query,
+        config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_QUERY",
+            output_dimensionality=_EMBEDDING_DIMENSIONS,
+        ),
+    )
+    if not response.embeddings or not response.embeddings[0].values:
+        raise ValueError("Gemini returned an empty query embedding")
+
+    embedding = response.embeddings[0].values
+    if len(embedding) != _EMBEDDING_DIMENSIONS:
+        raise ValueError(
+            f"Expected {_EMBEDDING_DIMENSIONS} embedding dimensions, "
+            f"received {len(embedding)}"
+        )
+
+    result = _supabase.rpc(
+        "match_document_chunks_filtered",
+        {
+            "query_embedding": embedding,
+            "match_count": max(1, min(match_count, 10)),
+            "p_document_title": document_title,
+            "p_page_number": page_number,
+        },
+    ).execute()
+    return result.data or []
+
+
 def _insert_document_and_chunks(
     metadata: DocumentMetadata,
     storage_url: str,

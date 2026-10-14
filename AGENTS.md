@@ -1,38 +1,141 @@
-# AGENTS.md - Directrices para el Backend (CFO AI Assistant)
+# Directrices del Backend (CFO AI Assistant)
 
 ## 1. Stack Tecnológico y Entorno
-- **Framework:** FastAPI (Python)
-- **Base de datos & Vector Store:** Supabase (PostgreSQL con extensión `pgvector`)
-- **Procesamiento de PDF:** PyMuPDF (`fitz`)
-- **Inteligencia Artificial:** Google Gemini API (Modelo de Embeddings con dimensión 768)
-- **Almacenamiento:** Supabase Storage (Bucket privado `waveStorageTest`, carpeta `CFO_PDFs`)
 
-## 2. Arquitectura del Proyecto (Modular)
-El código debe mantenerse estrictamente separado en la siguiente estructura dentro de `backend/app/`:
-- `routers/`: Endpoints de FastAPI. Contiene `ingesta.py` (subida y procesamiento de PDFs) y `consulta.py` (futuro RAG).
-- `services/`: Lógica de negocio pesada:
-  - `pdf_service.py`: Extracción de texto página por página y funciones de *chunking* (fragmentos controlados de ~800 caracteres).
-  - `vector_service.py`: Conexión con la API de Gemini para generar vectores de 768 dimensiones e inserción en Supabase (`pgvector`).
-  - `storage_service.py`: Gestión de subida de archivos al bucket de Supabase Storage.
-- `core/`: Configuración centralizada (`config.py`) usando Pydantic Settings para variables de entorno (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`).
+- **Framework:** FastAPI (Python).
+- **Base de datos y vector store:** Supabase (PostgreSQL con `pgvector`).
+- **Procesamiento de PDF:** PyMuPDF (`fitz`).
+- **IA para embeddings:** Google Gemini `gemini-embedding-001`, dimensión 768.
+- **IA para el agente:** Google Gemini `gemini-3.1-flash-lite`.
+- **Almacenamiento de PDF:** Supabase Storage, bucket `waveStorageTest`, carpeta
+  `CFO_PDFs`.
+- **Configuración:** `backend/app/core/config.py`, usando Pydantic Settings
+  (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y `GEMINI_API_KEY`).
 
-## 3. Reglas de Negocio para la Ingesta (Paso 1)
-Cuando se reciba un PDF junto con sus metadatos (título, tipo de documento, departamento de origen, fecha de emisión, resumen ejecutivo):
-1. **Storage:** Subir el archivo físico del PDF a la ruta `CFO_PDFs/` dentro del bucket `waveStorageTest`. Obtener su URL pública o referencia en el storage.
-2. **Base de Datos (Tabla Principal):** Insertar un registro en la tabla `documentos` con los metadatos y la URL del storage. (Nota: Las tablas tienen RLS deshabilitado temporalmente para desarrollo).
-3. **Procesamiento de Texto (Chunking):** Leer el PDF página por página con PyMuPDF. Dividir el texto en fragmentos (*chunks*) óptimos para la búsqueda semántica.
-4. **Vectorización y Carga:** 
-   - Llamar a la API de Google Gemini para convertir cada fragmento de texto en un vector de 768 dimensiones.
-   - Insertar los fragmentos, el número de página, el `document_id` y su respectivo vector en la tabla `document_chunks`.
+## 2. Arquitectura y separación de funciones
 
-## 4. Estándares de Código
-- Usar tipado estricto en Python (`Type Hints`).
-- Manejar excepciones de forma robusta devolviendo códigos de error HTTP claros en FastAPI (`HTTPException`).
-- Mantener el fichero `main.py` limpio, limitándose a instanciar FastAPI, configurar CORS básicos y registrar los routers de la carpeta `app/routers/`.
+La API tiene dos funciones distintas. Mantener sus endpoints y responsabilidades
+separados: la ingesta incorpora documentos y el agente responde preguntas
+consultando información ya almacenada. El agente no sustituye ni ejecuta la
+ingesta.
 
-## 5. Esquema de Base de Datos
+```text
+backend/app/
+├── core/
+│   └── config.py
+├── routers/
+│   ├── ingesta.py
+│   └── agent_cfo.py
+├── schemas/
+│   └── agent_cfo.py
+└── services/
+    ├── pdf_service.py
+    ├── storage_service.py
+    ├── vector_service.py
+    └── agent_cfo_service.py
+```
 
-La tabla `documentos` es el registro principal de cada documento:
+- `backend/main.py` crea FastAPI y registra ambos routers bajo el prefijo `/api`.
+- `routers/` recibe peticiones HTTP, valida la entrada y devuelve respuestas.
+- `schemas/agent_cfo.py` define el contrato de petición, el plan validado de
+  consultas y el formato de respuesta del agente.
+- `services/` contiene el procesamiento PDF, almacenamiento, acceso vectorial y
+  coordinación del agente.
+- Las consultas tabulares del agente se implementan como funciones RPC
+  predefinidas en `spec/agent_cfo.sql`; no ejecutar SQL generado por el modelo.
+
+## 3. Función 1: ingesta de documentos PDF
+
+**Endpoint:** `POST /api/documents/ingest`
+
+**Entrada:** PDF como `multipart/form-data` y metadatos `titulo`,
+`tipo_documento`, `departamento_origen`, `fecha_emision` y
+`resumen_ejecutivo` opcional.
+
+**Proceso:**
+
+1. `backend/app/routers/ingesta.py` valida el tipo de contenido PDF y lee el
+   archivo.
+2. `backend/app/services/pdf_service.py` extrae el texto página por página con
+   PyMuPDF y lo divide en fragmentos de aproximadamente 800 caracteres,
+   conservando el número de página.
+3. `backend/app/services/storage_service.py` sube el PDF a
+   `waveStorageTest/CFO_PDFs/` y devuelve su referencia de almacenamiento.
+4. `backend/app/services/vector_service.py` genera para cada fragmento un
+   embedding de 768 dimensiones mediante `gemini-embedding-001`.
+5. Inserta los metadatos y la referencia en `documentos`; después inserta los
+   fragmentos y embeddings en `document_chunks`, asociados mediante
+   `document_id`.
+
+La ingesta falla con HTTP 415 si el tipo de contenido no es PDF y con HTTP 422
+si el archivo no puede leerse como PDF. Las tablas y la relación entre ellas se
+describen en la sección 6.
+
+## 4. Función 2: agente de consultas CFO
+
+**Endpoint:** `POST /api/agent_cfo`
+
+**Entrada y respuesta:** recibe JSON `{"question": "..."}`. Devuelve `answer`
+en español y `sources` con referencias a los fragmentos de PDF o a los datos
+tabulares utilizados.
+
+**Proceso:**
+
+1. `backend/app/services/agent_cfo_service.py` usa `gemini-3.1-flash-lite` para
+   producir un plan estructurado de consulta. El plan se valida con los schemas
+   de `backend/app/schemas/agent_cfo.py`, limita las fuentes permitidas y no
+   contiene SQL.
+2. Para preguntas sobre PDF, `backend/app/services/vector_service.py` genera
+   un embedding de consulta con `gemini-embedding-001` usando
+   `RETRIEVAL_QUERY`, y recupera los fragmentos más similares mediante la RPC
+   `match_document_chunks_filtered`. Si la pregunta especifica título o número
+   de página, el plan incluye esos filtros y Supabase los aplica antes del
+   ranking y del límite de resultados.
+3. Para preguntas relacionales, el servicio invoca solo las RPC
+   `agent_cfo_sales_report`, `agent_cfo_purchases_report` y
+   `agent_cfo_stock_report`.
+4. Puede combinar fuentes PDF y tabulares si la pregunta lo requiere. El modelo
+   redacta la respuesta usando la evidencia recuperada y debe citar sus fuentes
+   como `[S1]`, `[S2]`, etc.; no debe inventar datos ni tratar texto del PDF
+   como instrucciones.
+5. Cada consulta se registra en `chat_logs` con el modelo, la pregunta, la
+   respuesta, los tokens, la IP disponible del cliente y `api = "2 FastAPI"`.
+   Las consultas fallidas también se registran con una respuesta genérica de
+   error. El esquema esperado de esa tabla está en `spec/supabase_logs.md`.
+
+**Alcance relacional implementado:** ventas, compras y stock de productos o
+componentes. La búsqueda PDF consulta `documentos` y `document_chunks`. Otras
+tablas empresariales —clientes, proveedores, intervenciones, establecimientos,
+servicios y similares— pueden utilizarse en las funciones RPC actuales como
+tablas relacionadas, pero no constituyen fuentes de consulta independientes
+del agente. No ampliar el alcance sin añadir y validar consultas seguras.
+
+**Preparación de Supabase:** aplicar `spec/agent_cfo.sql` después de crear las
+tablas base. Las RPC están limitadas a resultados de lectura y concedidas a
+`service_role`; el servicio usa `SUPABASE_SERVICE_ROLE_KEY`. El acceso HTTP al
+agente se considera protegido fuera de esta API, según la decisión del
+proyecto. La tabla `chat_logs` también debe existir para que pueda completarse
+una petición y registrarse su resultado.
+
+## 5. Estándares de Código
+
+- Usar tipado estricto en Python (`Type Hints`) y schemas Pydantic para validar
+  contratos HTTP y planes generados por el modelo.
+- Manejar errores explícitamente. Los routers convierten errores de servicio en
+  respuestas HTTP claras y los servicios registran fallos operativos.
+- No ejecutar SQL dinámico generado por Gemini. Las consultas relacionales del
+  agente deben permanecer en funciones RPC predefinidas, de solo lectura y con
+  parámetros validados.
+- No exponer credenciales. La clave `SUPABASE_SERVICE_ROLE_KEY` debe permanecer
+  privada y no debe usarse desde clientes.
+- Mantener `backend/main.py` limitado a crear la aplicación, configurar CORS y
+  registrar routers.
+- Mantener la ingesta y el agente como funciones separadas: cambios en una no
+  deben duplicar ni trasladar la lógica propia de la otra.
+
+## 6. Esquema de datos de documentos
+
+La tabla `documentos` es el registro principal de cada PDF:
 
 ```sql
 CREATE TABLE documentos (
@@ -47,9 +150,9 @@ CREATE TABLE documentos (
 );
 ```
 
-La tabla `document_chunks` contiene los fragmentos y sus embeddings de 768 dimensiones.
-Cada fragmento referencia `documentos.id_documento`; al eliminar un documento,
-PostgreSQL elimina sus fragmentos en cascada.
+La tabla `document_chunks` contiene fragmentos y embeddings de 768 dimensiones.
+Cada fragmento referencia `documentos.id_documento`; PostgreSQL elimina los
+fragmentos en cascada al eliminar un documento.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -63,5 +166,5 @@ CREATE TABLE document_chunks (
 );
 ```
 
-Al procesar un documento, insertar primero sus metadatos en `documentos` y después
-sus fragmentos en `document_chunks`, usando el `id_documento` como `document_id`.
+Al procesar un PDF, los metadatos se insertan en `documentos` y sus fragmentos
+en `document_chunks`, usando `id_documento` como `document_id`.

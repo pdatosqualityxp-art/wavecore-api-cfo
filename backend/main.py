@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers.agent_cfo import router as agent_cfo_router
 from app.routers.ingesta import router as ingest_router
 
 
@@ -15,3 +16,4 @@ app.add_middleware(
 )
 
 app.include_router(ingest_router, prefix="/api")
+app.include_router(agent_cfo_router, prefix="/api")

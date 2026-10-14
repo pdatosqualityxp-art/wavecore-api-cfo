@@ -38,6 +38,10 @@ para generar embeddings de 768 dimensiones.
 4. Prepara Supabase:
    - Ejecuta el SQL de las tablas `documentos` y `document_chunks` que aparece
      en [AGENTS.md](./AGENTS.md).
+   - Ejecuta [spec/agent_cfo.sql](./spec/agent_cfo.sql) para crear las funciones
+     de consulta de solo lectura del agente CFO.
+     Si ya se había aplicado una versión anterior, vuelve a ejecutar el archivo
+     actualizado para añadir la búsqueda PDF filtrada por título y página.
    - Crea el bucket privado `waveStorageTest` en Supabase Storage.
 
 5. Entra en `backend`, crea y activa el entorno virtual e instala las dependencias:
@@ -71,6 +75,23 @@ junto con los campos `titulo`, `tipo_documento`, `departamento_origen`,
 `fecha_emision` (formato `YYYY-MM-DD`) y, opcionalmente, `resumen_ejecutivo`.
 El servicio almacena el PDF, extrae texto por página, lo fragmenta y guarda los
 embeddings junto con los metadatos.
+
+## Agente CFO
+
+El endpoint `POST /api/agent_cfo` recibe un JSON con la propiedad `question`.
+El agente puede combinar búsqueda semántica sobre los PDF con informes de solo
+lectura de ventas, compras y stock; devuelve una respuesta en español y sus
+fuentes. Las consultas SQL se limitan a funciones RPC predefinidas en
+`spec/agent_cfo.sql`; no se ejecuta SQL generado por el modelo. Cuando se
+especifica un título o página del PDF, esos filtros se aplican durante la
+recuperación de fragmentos.
+
+El endpoint utiliza la clave de servicio de Supabase. En este proyecto se asume
+que la autenticación y protección de acceso se aplican fuera del backend.
+Cada consulta se registra en `chat_logs` con el modelo, prompt, respuesta, uso
+de tokens, IP del cliente y `api = "2 FastAPI"`; las consultas fallidas también
+se registran con una respuesta genérica de error. La tabla debe existir en
+Supabase antes de utilizar el endpoint.
 
 ## Configuración para producción
 
