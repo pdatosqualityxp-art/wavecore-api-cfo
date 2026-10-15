@@ -4,7 +4,7 @@ from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.schemas.agent_cfo import AgentCFOPlan
+from app.schemas.agent_cfo import AgentCFOPlan, AgentCFOQuery
 
 os.environ.setdefault("SUPABASE_URL", "http://localhost:54321")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
@@ -50,15 +50,19 @@ class AgentCFOLoggingTests(unittest.TestCase):
                 "203.0.113.7",
             )
 
-        self.assertEqual(result.answer, "Las ventas fueron 100 €.")
+        expected_answer = (
+            "Las ventas fueron 100 €.\n\nModelo utilizado: gemini-3.5-flash-lite"
+        )
+        self.assertEqual(result.answer, expected_answer)
+        self.assertEqual(result.model, "gemini-3.5-flash-lite")
         self.supabase.table.assert_called_once_with("chat_logs")
         logged = self.table.insert.call_args.args[0]
         self.assertEqual(
             logged,
             {
-                "model_used": "gemini-3.1-flash-lite",
+                "model_used": "gemini-3.5-flash-lite",
                 "prompt": "¿Cuánto vendimos?",
-                "reply": "Las ventas fueron 100 €.",
+                "reply": expected_answer,
                 "prompt_tokens": 12,
                 "response_tokens": 4,
                 "total_tokens": 16,
@@ -84,6 +88,47 @@ class AgentCFOLoggingTests(unittest.TestCase):
         self.assertEqual(logged["prompt"], "Pregunta fallida")
         self.assertEqual(logged["reply"], "La consulta no pudo completarse.")
         self.assertEqual(logged["api"], "2 FastAPI")
+
+    def test_response_reports_consulted_sources_even_when_queries_return_no_rows(self) -> None:
+        plan = AgentCFOPlan(
+            queries=[
+                AgentCFOQuery(
+                    source="documents",
+                    document_title="presupuesto",
+                ),
+                AgentCFOQuery(source="sales"),
+            ]
+        )
+        model_response = SimpleNamespace(
+            text="No encontré evidencia suficiente.",
+            usage_metadata=None,
+        )
+        with (
+            patch.object(self.service, "_supabase", self.supabase),
+            patch.object(self.service, "_plan_queries", return_value=plan),
+            patch.object(self.service, "_execute_query", return_value=[]),
+            patch.object(
+                self.service._gemini.models,
+                "generate_content",
+                return_value=model_response,
+            ),
+        ):
+            result = self.service._answer_question(
+                "Según el presupuesto y ventas",
+                None,
+            )
+
+        self.assertEqual(
+            [source.model_dump() for source in result.consulted_sources],
+            [
+                {"type": "pdf", "reference": "presupuesto"},
+                {
+                    "type": "table",
+                    "reference": "ventas (informe agregado: productos y clientes)",
+                },
+            ],
+        )
+        self.assertEqual(result.sources, [])
 
 
 if __name__ == "__main__":

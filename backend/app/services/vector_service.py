@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.services.pdf_service import PDFChunk
 
 
-_EMBEDDING_MODEL = "gemini-embedding-001"
+_EMBEDDING_MODEL = settings.gemini_embedding_model
 _EMBEDDING_DIMENSIONS = 768
 _gemini = genai.Client(api_key=settings.gemini_api_key)
 _supabase = create_client(

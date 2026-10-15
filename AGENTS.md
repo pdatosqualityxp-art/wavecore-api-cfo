@@ -6,11 +6,14 @@
 - **Base de datos y vector store:** Supabase (PostgreSQL con `pgvector`).
 - **Procesamiento de PDF:** PyMuPDF (`fitz`).
 - **IA para embeddings:** Google Gemini `gemini-embedding-001`, dimensión 768.
-- **IA para el agente:** Google Gemini `gemini-3.1-flash-lite`.
+- **IA para el agente:** Google Gemini `gemini-3.5-flash-lite`.
 - **Almacenamiento de PDF:** Supabase Storage, bucket `waveStorageTest`, carpeta
   `CFO_PDFs`.
 - **Configuración:** `backend/app/core/config.py`, usando Pydantic Settings
-  (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y `GEMINI_API_KEY`).
+  (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`,
+  `GEMINI_AGENT_MODEL` y `GEMINI_EMBEDDING_MODEL`). Los modelos tienen
+  predeterminados `gemini-3.5-flash-lite` y `gemini-embedding-001`; las variables
+  del entorno del proceso pueden sobrescribirlos.
 
 ## 2. Arquitectura y separación de funciones
 
@@ -76,24 +79,32 @@ describen en la sección 6.
 **Endpoint:** `POST /api/agent_cfo`
 
 **Entrada y respuesta:** recibe JSON `{"question": "..."}`. Devuelve `answer`
-en español y `sources` con referencias a los fragmentos de PDF o a los datos
-tabulares utilizados.
+en español, terminado con el modelo utilizado; `model` contiene también el
+identificador configurado en `GEMINI_AGENT_MODEL`, `consulted_sources` indica
+las tablas o PDFs consultados incluso si no se encontraron filas, y `sources`
+contiene referencias a las evidencias recuperadas.
 
 **Proceso:**
 
-1. `backend/app/services/agent_cfo_service.py` usa `gemini-3.1-flash-lite` para
+1. `backend/app/services/agent_cfo_service.py` usa `gemini-3.5-flash-lite` para
    producir un plan estructurado de consulta. El plan se valida con los schemas
-   de `backend/app/schemas/agent_cfo.py`, limita las fuentes permitidas y no
-   contiene SQL.
+   de `backend/app/schemas/agent_cfo.py`; si no es válido, se reintenta una vez
+   con los errores de validación antes de fallar. Limita las fuentes permitidas
+   y no contiene SQL. Si la pregunta menciona presupuesto y ventas, el servicio
+   garantiza consultas a ambos documentos PDF (filtrados por título
+   `presupuesto`) e informe de ventas, aunque el planificador omita una fuente.
 2. Para preguntas sobre PDF, `backend/app/services/vector_service.py` genera
    un embedding de consulta con `gemini-embedding-001` usando
    `RETRIEVAL_QUERY`, y recupera los fragmentos más similares mediante la RPC
    `match_document_chunks_filtered`. Si la pregunta especifica título o número
    de página, el plan incluye esos filtros y Supabase los aplica antes del
    ranking y del límite de resultados.
-3. Para preguntas relacionales, el servicio invoca solo las RPC
-   `agent_cfo_sales_report`, `agent_cfo_purchases_report` y
-   `agent_cfo_stock_report`.
+3. Para preguntas relacionales, el servicio invoca RPCs predefinidas:
+   `agent_cfo_sales_report`, `agent_cfo_purchases_report`,
+   `agent_cfo_stock_report`, `agent_cfo_products_catalog`,
+   `agent_cfo_interventions_report`, `agent_cfo_table_count` y
+   `agent_cfo_table_read`. Las funciones genéricas solo admiten las tablas
+   incluidas explícitamente en `spec/database.sql`.
 4. Puede combinar fuentes PDF y tabulares si la pregunta lo requiere. El modelo
    redacta la respuesta usando la evidencia recuperada y debe citar sus fuentes
    como `[S1]`, `[S2]`, etc.; no debe inventar datos ni tratar texto del PDF
@@ -103,19 +114,28 @@ tabulares utilizados.
    Las consultas fallidas también se registran con una respuesta genérica de
    error. El esquema esperado de esa tabla está en `spec/supabase_logs.md`.
 
-**Alcance relacional implementado:** ventas, compras y stock de productos o
-componentes. La búsqueda PDF consulta `documentos` y `document_chunks`. Otras
-tablas empresariales —clientes, proveedores, intervenciones, establecimientos,
-servicios y similares— pueden utilizarse en las funciones RPC actuales como
-tablas relacionadas, pero no constituyen fuentes de consulta independientes
-del agente. No ampliar el alcance sin añadir y validar consultas seguras.
+**Alcance relacional implementado:** lectura de todas las tablas definidas en
+`spec/database.sql`: clientes, proveedores de componentes y servicios,
+productos, componentes, almacenes, stocks, ventas, compras, estados, servicios,
+establecimientos e intervenciones. Las lecturas directas usan páginas de 10 y
+recuperan hasta 50 filas; las consultas de stock se paginan hasta 50 ubicaciones.
+Ambas indican si quedan resultados fuera del máximo. Ventas, compras e intervenciones admiten
+filtros de fecha. Las preguntas de recuento o ranking de intervenciones por
+establecimiento usan `agent_cfo_interventions_report`, que agrupa el conjunto
+completo antes de limitar el número de filas devueltas. Los conteos exactos de
+tablas usan `agent_cfo_table_count`; las lecturas de registros se paginan hasta
+50 filas y notifican si hay más. Para ventas, compras y stock se usan las RPC de
+informes existentes. La búsqueda PDF consulta
+`documentos` y `document_chunks`. El agente no puede insertar, modificar o
+borrar filas ni ejecutar SQL generado por el modelo.
 
 **Preparación de Supabase:** aplicar `spec/agent_cfo.sql` después de crear las
-tablas base. Las RPC están limitadas a resultados de lectura y concedidas a
-`service_role`; el servicio usa `SUPABASE_SERVICE_ROLE_KEY`. El acceso HTTP al
-agente se considera protegido fuera de esta API, según la decisión del
-proyecto. La tabla `chat_logs` también debe existir para que pueda completarse
-una petición y registrarse su resultado.
+tablas base. Vuelve a aplicar el archivo actualizado para habilitar la
+paginación y los conteos de tablas. Las RPC están limitadas a resultados de
+lectura y concedidas a `service_role`; el servicio usa
+`SUPABASE_SERVICE_ROLE_KEY`. El acceso HTTP al agente se considera protegido
+fuera de esta API, según la decisión del proyecto. La tabla `chat_logs` también
+debe existir para que pueda completarse una petición y registrarse su resultado.
 
 ## 5. Estándares de Código
 

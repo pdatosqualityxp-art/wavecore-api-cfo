@@ -13,7 +13,44 @@ class AgentCFORequest(BaseModel):
 class AgentCFOQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["documents", "sales", "purchases", "stock"]
+    source: Literal[
+        "documents",
+        "products",
+        "clientes",
+        "proveedores_compo",
+        "proveedores_serv",
+        "componentes",
+        "almacen",
+        "stock_prod",
+        "stock_compo",
+        "ventas",
+        "compras",
+        "estados_intervencion",
+        "servicios_intervencion",
+        "establecimientos",
+        "intervenciones",
+        "sales",
+        "purchases",
+        "table_count",
+        "intervention_counts",
+        "stock",
+    ]
+    table_name: Literal[
+        "clientes",
+        "proveedores_compo",
+        "proveedores_serv",
+        "productos",
+        "componentes",
+        "almacen",
+        "stock_prod",
+        "stock_compo",
+        "ventas",
+        "compras",
+        "estados_intervencion",
+        "servicios_intervencion",
+        "establecimientos",
+        "intervenciones",
+    ] | None = None
     start_date: date | None = None
     end_date: date | None = None
     group_by: Literal[
@@ -69,8 +106,39 @@ class AgentCFOQuery(BaseModel):
             "supplier",
         }:
             raise ValueError("Unsupported purchases filter")
+        if self.group_by is not None and self.source not in {"sales", "purchases"}:
+            raise ValueError("Grouping is only valid for sales or purchases reports")
+        if self.filter_by is not None and self.source not in {"sales", "purchases"}:
+            raise ValueError("Entity filters are only valid for sales or purchases")
+        if (
+            (self.start_date is not None or self.end_date is not None)
+            and self.source not in {
+                "sales",
+                "purchases",
+                "ventas",
+                "compras",
+                "intervenciones",
+                "intervention_counts",
+                "table_count",
+            }
+        ):
+            raise ValueError("Date filters are not valid for this source")
+        if (
+            self.source == "table_count"
+            and (self.start_date is not None or self.end_date is not None)
+            and self.table_name not in {"ventas", "compras", "intervenciones"}
+        ):
+            raise ValueError("Date filters are only valid for transactional counts")
         if self.source == "stock" and self.item_type is None:
             raise ValueError("Stock queries must specify product or component")
+        if self.source == "table_count" and self.table_name is None:
+            raise ValueError("Table count queries must specify a table")
+        if self.source != "table_count" and self.table_name is not None:
+            raise ValueError("table_name is only valid for table counts")
+        if self.item_type is not None and self.source != "stock":
+            raise ValueError("item_type is only valid for stock reports")
+        if self.warehouse is not None and self.source != "stock":
+            raise ValueError("warehouse is only valid for stock reports")
         if self.source != "documents" and (
             self.document_title is not None or self.page_number is not None
         ):
@@ -86,11 +154,18 @@ class AgentCFOPlan(BaseModel):
 
 class AgentCFOSource(BaseModel):
     id: str
-    type: Literal["pdf", "sales", "purchases", "stock"]
+    type: Literal["pdf", "products", "table", "sales", "purchases", "stock"]
     reference: str
     details: dict[str, object]
 
 
+class AgentCFOConsultedSource(BaseModel):
+    type: Literal["pdf", "table"]
+    reference: str
+
+
 class AgentCFOResponse(BaseModel):
     answer: str
+    model: str
     sources: list[AgentCFOSource]
+    consulted_sources: list[AgentCFOConsultedSource] = Field(default_factory=list)

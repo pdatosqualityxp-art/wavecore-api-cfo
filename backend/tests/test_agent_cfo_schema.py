@@ -69,6 +69,39 @@ class AgentCFORequestTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AgentCFOQuery(source="sales", sql="DROP TABLE ventas")
 
+    def test_plan_requires_allowlisted_table_for_exact_count(self) -> None:
+        query = AgentCFOQuery(source="table_count", table_name="clientes")
+
+        self.assertEqual(query.table_name, "clientes")
+        with self.assertRaises(ValidationError):
+            AgentCFOQuery(source="table_count")
+        with self.assertRaises(ValidationError):
+            AgentCFOQuery(source="table_count", table_name="chat_logs")
+
+    def test_plan_accepts_direct_read_of_every_business_table(self) -> None:
+        tables = [
+            "clientes",
+            "proveedores_compo",
+            "proveedores_serv",
+            "productos",
+            "componentes",
+            "almacen",
+            "stock_prod",
+            "stock_compo",
+            "ventas",
+            "compras",
+            "estados_intervencion",
+            "servicios_intervencion",
+            "establecimientos",
+            "intervenciones",
+        ]
+
+        for table in tables:
+            source = "products" if table == "productos" else table
+            with self.subTest(table=table):
+                query = AgentCFOQuery(source=source)
+                self.assertEqual(query.source, source)
+
 
 if __name__ == "__main__":
     unittest.main()

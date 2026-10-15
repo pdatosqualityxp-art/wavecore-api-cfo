@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     supabase_url: StrictStr
     supabase_service_role_key: StrictStr
     gemini_api_key: StrictStr
+    gemini_agent_model: StrictStr = "gemini-3.5-flash-lite"
+    gemini_embedding_model: StrictStr = "gemini-embedding-001"
 
 
 settings = Settings()

@@ -33,7 +33,11 @@ para generar embeddings de 768 dimensiones.
    ```
 
    Configura `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y `GEMINI_API_KEY`
-   dentro de `.env`. No compartas ni subas este archivo al repositorio.
+   dentro de `.env`. Opcionalmente, configura `GEMINI_AGENT_MODEL` y
+   `GEMINI_EMBEDDING_MODEL`; por defecto se usan `gemini-3.5-flash-lite` y
+   `gemini-embedding-001`, respectivamente. Las variables del entorno del
+   proceso prevalecen sobre los valores de `.env`. No compartas ni subas este
+   archivo al repositorio.
 
 4. Prepara Supabase:
    - Ejecuta el SQL de las tablas `documentos` y `document_chunks` que aparece
@@ -80,11 +84,24 @@ embeddings junto con los metadatos.
 
 El endpoint `POST /api/agent_cfo` recibe un JSON con la propiedad `question`.
 El agente puede combinar búsqueda semántica sobre los PDF con informes de solo
-lectura de ventas, compras y stock; devuelve una respuesta en español y sus
-fuentes. Las consultas SQL se limitan a funciones RPC predefinidas en
-`spec/agent_cfo.sql`; no se ejecuta SQL generado por el modelo. Cuando se
-especifica un título o página del PDF, esos filtros se aplican durante la
-recuperación de fragmentos.
+lectura y consultas limitadas a todas las tablas de negocio definidas en
+`spec/database.sql`. Las consultas directas a tablas (incluido el catálogo de
+productos) se paginan hasta 50 filas; las consultas de stock se paginan hasta 50
+ubicaciones. Si hay más resultados, la respuesta indica que la lista está
+incompleta. Las preguntas de conteo usan una RPC de conteo exacto y no cuentan
+filas de muestra. Para agregados se usan informes específicos. Devuelve una
+respuesta en español que termina
+indicando el modelo utilizado; también devuelve el identificador del modelo en
+`model`. `consulted_sources` indica las tablas o documentos consultados aunque no
+se encuentren filas y `sources` contiene las evidencias recuperadas. Las consultas
+SQL se limitan a funciones RPC predefinidas en
+`spec/agent_cfo.sql`; no se ejecuta SQL generado por el modelo ni se permiten
+escrituras. Los recuentos de tablas y rankings de intervenciones por
+establecimiento se calculan sobre todas las filas antes de limitar la respuesta.
+Cuando se especifica un título o página del PDF, esos filtros se aplican durante
+la recuperación de fragmentos. Para habilitar la lectura de todas las tablas,
+aplica de nuevo el SQL actualizado de
+`spec/agent_cfo.sql` en Supabase.
 
 El endpoint utiliza la clave de servicio de Supabase. En este proyecto se asume
 que la autenticación y protección de acceso se aplican fuera del backend.

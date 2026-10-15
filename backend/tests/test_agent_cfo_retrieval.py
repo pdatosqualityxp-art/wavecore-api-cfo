@@ -76,6 +76,30 @@ class AgentCFOPDFRetrievalTests(unittest.TestCase):
             page_number=16,
         )
 
+    def test_budget_query_filters_pdf_search_by_budget_title(self) -> None:
+        query = self.query_model(
+            source="documents",
+            document_title="presupuesto",
+        )
+
+        with patch.object(
+            self.agent_service,
+            "search_document_chunks",
+            return_value=[],
+        ) as search:
+            rows = self.agent_service._execute_query(
+                query,
+                "Según el presupuesto y las ventas",
+            )
+
+        self.assertEqual(rows, [])
+        search.assert_called_once_with(
+            "Según el presupuesto y las ventas",
+            match_count=8,
+            document_title="presupuesto",
+            page_number=None,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
