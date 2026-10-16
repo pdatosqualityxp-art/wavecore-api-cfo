@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers.agent_cfo import router as agent_cfo_router
+from app.routers.health import router as health_router
 from app.routers.ingesta import router as ingest_router
 
 
@@ -23,6 +24,7 @@ def create_app(cors_allowed_origins: list[str] | None = None) -> FastAPI:
 
     app.include_router(ingest_router, prefix="/api")
     app.include_router(agent_cfo_router, prefix="/api")
+    app.include_router(health_router, prefix="/api")
     return app
 
 
