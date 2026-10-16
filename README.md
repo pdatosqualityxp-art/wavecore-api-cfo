@@ -82,19 +82,26 @@ embeddings junto con los metadatos.
 
 ## Agente CFO
 
-El endpoint `POST /api/agent_cfo` recibe un JSON con la propiedad `question`.
+El endpoint `POST /api/agent_cfo` recibe un JSON con `question` y acepta el
+`conversation_id` UUID opcional. La respuesta devuelve siempre el ID: si se
+omite, el backend crea uno para esa primera consulta. El cliente debe reutilizar
+ese valor en los siguientes mensajes de la misma ventana de chat; al abrir una
+ventana nueva o descartar su historial debe iniciar otra conversación sin enviar
+el ID anterior. El backend usa hasta los seis turnos previos de esa conversación
+para resolver referencias, y consulta nuevamente las fuentes para cada respuesta.
 El agente puede combinar búsqueda semántica sobre los PDF con informes de solo
 lectura y consultas limitadas a todas las tablas de negocio definidas en
 `spec/database.sql`. Las consultas directas a tablas (incluido el catálogo de
-productos) se paginan hasta 50 filas; las consultas de stock se paginan hasta 50
+productos) se paginan hasta 300 filas; las consultas de stock se paginan hasta 50
 ubicaciones. Si hay más resultados, la respuesta indica que la lista está
 incompleta. Las preguntas de conteo usan una RPC de conteo exacto y no cuentan
 filas de muestra. Para agregados se usan informes específicos. Devuelve una
 respuesta en español que termina
 indicando el modelo utilizado; también devuelve el identificador del modelo en
-`model`. `consulted_sources` indica las tablas o documentos consultados aunque no
-se encuentren filas y `sources` contiene las evidencias recuperadas. Las consultas
-SQL se limitan a funciones RPC predefinidas en
+`model`. `consulted_sources` indica las tablas o documentos consultados aunque no se
+encuentren filas; los documentos recuperados se resumen una sola vez por título,
+sin repetir las páginas. `sources` conserva las evidencias recuperadas por página.
+Las consultas SQL se limitan a funciones RPC predefinidas en
 `spec/agent_cfo.sql`; no se ejecuta SQL generado por el modelo ni se permiten
 escrituras. Los recuentos de tablas y rankings de intervenciones por
 establecimiento se calculan sobre todas las filas antes de limitar la respuesta.
@@ -102,13 +109,29 @@ Cuando se especifica un título o página del PDF, esos filtros se aplican duran
 la recuperación de fragmentos. Para habilitar la lectura de todas las tablas,
 aplica de nuevo el SQL actualizado de
 `spec/agent_cfo.sql` en Supabase.
+Las preguntas de cobertura de stock habitual usan la RPC
+`agent_cfo_stock_coverage_report`: comparan el stock actual con el promedio
+mensual de unidades vendidas durante los seis meses completos anteriores al mes
+actual y determinan si cubre un mes promedio. Las previsiones futuras no se
+deducen de ventas históricas; no hay una fuente de previsión ni se consideran
+reservas, pedidos pendientes o plazos de reposición.
+
+Para consultas como "dime las ventas del cliente Aroma de Gracia", el agente
+resuelve primero el cliente por nombre y después consulta sus ventas individuales
+con nombres de producto. Las solicitudes de total o resumen usan el informe
+agregado filtrado por cliente. Los nombres ambiguos se informan como tales, no se
+combinan; las ventas detalladas se paginan y la respuesta indica si se alcanza
+el máximo de 300 registros. Las definiciones de relaciones y semántica de negocio
+están en `spec/agent_cfo_semantics.md`.
 
 El endpoint utiliza la clave de servicio de Supabase. En este proyecto se asume
 que la autenticación y protección de acceso se aplican fuera del backend.
 Cada consulta se registra en `chat_logs` con el modelo, prompt, respuesta, uso
-de tokens, IP del cliente y `api = "2 FastAPI"`; las consultas fallidas también
-se registran con una respuesta genérica de error. La tabla debe existir en
-Supabase antes de utilizar el endpoint.
+de tokens, IP del cliente, `conversation_id` y `api = "2 FastAPI"`; las consultas
+fallidas también se registran con una respuesta genérica de error. La tabla debe
+existir en Supabase antes de utilizar el endpoint. Para añadir la columna e índice
+de conversación a una instalación existente, consulta
+[`spec/supabase_logs.md`](./spec/supabase_logs.md).
 
 ## Configuración para producción
 

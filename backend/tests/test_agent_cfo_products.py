@@ -11,6 +11,13 @@ os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
 
 
 class AgentCFOProductsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        module = import_module("app.services.agent_cfo_service")
+        for name, value in (("_TABLE_PAGE_SIZE", 10), ("_MAX_TABLE_ROWS", 50)):
+            patcher = patch.object(module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.service = import_module("app.services.agent_cfo_service")

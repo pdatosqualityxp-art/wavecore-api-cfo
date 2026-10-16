@@ -17,10 +17,14 @@ async def ask_agent_cfo(
 ) -> AgentCFOResponse:
     client_ip = request.client.host if request.client else None
     try:
-        return await answer_question(body.question, client_ip)
+        return await answer_question(
+            body.question,
+            client_ip,
+            body.conversation_id,
+        )
     except AgentCFOServiceError as error:
         logger.exception("Agent CFO request failed")
         raise HTTPException(
-            status_code=502,
-            detail="The CFO agent could not complete the request",
+            status_code=error.status_code,
+            detail=f"The CFO agent could not complete the request: {error.detail}",
         ) from error

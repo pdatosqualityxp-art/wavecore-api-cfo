@@ -1,0 +1,17 @@
+| schema_name | table_name      | column_name        | foreign_key_name                       | referenced_schema | referenced_table       | referenced_column  | key_position |
+| ----------- | --------------- | ------------------ | -------------------------------------- | ----------------- | ---------------------- | ------------------ | ------------ |
+| public      | compras         | id_compo           | compras_id_compo_fkey                  | public            | componentes            | id_compo           | 1            |
+| public      | compras         | id_prov_compo      | compras_id_prov_compo_fkey             | public            | proveedores_compo      | id_prov_compo      | 1            |
+| public      | document_chunks | document_id        | document_chunks_document_id_fkey       | public            | documentos             | id_documento       | 1            |
+| public      | intervenciones  | id_cliente         | intervenciones_id_cliente_fkey         | public            | clientes               | id_cliente         | 1            |
+| public      | intervenciones  | id_establecimiento | intervenciones_id_establecimiento_fkey | public            | establecimientos       | id_establecimiento | 1            |
+| public      | intervenciones  | id_estado          | intervenciones_id_estado_fkey          | public            | estados_intervencion   | id_estado          | 1            |
+| public      | intervenciones  | id_pro_serv        | intervenciones_id_pro_serv_fkey        | public            | proveedores_serv       | id_pro_serv        | 1            |
+| public      | intervenciones  | id_prod            | intervenciones_id_prod_fkey            | public            | productos              | id_prod            | 1            |
+| public      | intervenciones  | id_serv            | intervenciones_id_serv_fkey            | public            | servicios_intervencion | id_servicio        | 1            |
+| public      | stock_compo     | id_alm             | stock_compo_id_alm_fkey                | public            | almacen                | id_alm             | 1            |
+| public      | stock_compo     | id_compo           | stock_compo_id_compo_fkey              | public            | componentes            | id_compo           | 1            |
+| public      | stock_prod      | id_alm             | stock_prod_id_alm_fkey                 | public            | almacen                | id_alm             | 1            |
+| public      | stock_prod      | id_prod            | stock_prod_id_prod_fkey                | public            | productos              | id_prod            | 1            |
+| public      | ventas          | id_cliente         | ventas_id_cliente_fkey                 | public            | clientes               | id_cliente         | 1            |
+| public      | ventas          | id_prod            | ventas_id_prod_fkey                    | public            | productos              | id_prod            | 1            |

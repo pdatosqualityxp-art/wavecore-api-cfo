@@ -94,7 +94,12 @@ BEGIN
             WHEN 'month' THEN to_char(date_trunc('month', v.fecha_venta), 'YYYY-MM')
             WHEN 'product' THEN COALESCE(p.nom_prod, '(sin producto)')
             WHEN 'customer' THEN COALESCE(c.nom_cliente, '(sin cliente)')
-            ELSE 'Total'
+            WHEN 'total' THEN
+                CASE p_filter_by
+                    WHEN 'customer' THEN COALESCE(c.nom_cliente, '(sin cliente)')
+                    WHEN 'product' THEN COALESCE(p.nom_prod, '(sin producto)')
+                    ELSE 'Total'
+                END
         END,
         count(*)::bigint,
         COALESCE(sum(v.unidades), 0)::bigint,
@@ -222,7 +227,7 @@ BEGIN
         WHERE (p_search IS NULL OR p.nom_prod ILIKE '%' || p_search || '%')
           AND (p_warehouse IS NULL OR a.nom_alm ILIKE '%' || p_warehouse || '%')
         ORDER BY p.nom_prod, p.id_prod, a.nom_alm, a.id_alm
-        LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_item_type = 'component' THEN
         RETURN QUERY
@@ -239,12 +244,95 @@ BEGIN
         WHERE (p_search IS NULL OR c.nom_compo ILIKE '%' || p_search || '%')
           AND (p_warehouse IS NULL OR a.nom_alm ILIKE '%' || p_warehouse || '%')
         ORDER BY c.nom_compo, c.id_compo, a.nom_alm, a.id_alm
-        LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSE
         RAISE EXCEPTION 'Unsupported stock item type';
     END IF;
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION agent_cfo_stock_coverage_report(
+    p_search text
+)
+RETURNS TABLE (
+    product_id text,
+    product_name text,
+    current_stock_units bigint,
+    transactions_last_6_months bigint,
+    units_sold_last_6_months bigint,
+    average_monthly_units numeric,
+    coverage_months numeric,
+    stock_covers_one_month boolean,
+    period_start date,
+    period_end date
+)
+LANGUAGE sql
+STABLE
+AS $$
+    WITH period AS (
+        SELECT
+            (date_trunc('month', CURRENT_DATE) - interval '6 months')::date
+                AS period_start,
+            (date_trunc('month', CURRENT_DATE) - interval '1 day')::date
+                AS period_end
+    ),
+    selected_products AS (
+        SELECT p.id_prod, p.nom_prod
+        FROM productos AS p
+        WHERE p_search IS NULL
+           OR p.id_prod ILIKE '%' || p_search || '%'
+           OR p.nom_prod ILIKE '%' || p_search || '%'
+    ),
+    stock_totals AS (
+        SELECT sp.id_prod, sum(sp.unidades)::bigint AS current_stock_units
+        FROM stock_prod AS sp
+        GROUP BY sp.id_prod
+    ),
+    sales_totals AS (
+        SELECT
+            v.id_prod,
+            count(v.id_venta)::bigint AS transactions_last_6_months,
+            coalesce(sum(v.unidades), 0)::bigint AS units_sold_last_6_months
+        FROM ventas AS v
+        CROSS JOIN period AS pr
+        WHERE v.fecha_venta >= pr.period_start
+          AND v.fecha_venta <= pr.period_end
+        GROUP BY v.id_prod
+    )
+    SELECT
+        p.id_prod::text,
+        p.nom_prod::text,
+        coalesce(st.current_stock_units, 0)::bigint,
+        coalesce(sa.transactions_last_6_months, 0)::bigint,
+        coalesce(sa.units_sold_last_6_months, 0)::bigint,
+        CASE
+            WHEN coalesce(sa.units_sold_last_6_months, 0) > 0
+            THEN round(sa.units_sold_last_6_months::numeric / 6, 2)
+            ELSE NULL
+        END,
+        CASE
+            WHEN coalesce(sa.units_sold_last_6_months, 0) > 0
+            THEN round(
+                coalesce(st.current_stock_units, 0)::numeric * 6
+                    / sa.units_sold_last_6_months,
+                2
+            )
+            ELSE NULL
+        END,
+        CASE
+            WHEN coalesce(sa.units_sold_last_6_months, 0) > 0
+            THEN coalesce(st.current_stock_units, 0)::numeric
+                >= sa.units_sold_last_6_months::numeric / 6
+            ELSE NULL
+        END,
+        pr.period_start,
+        pr.period_end
+    FROM selected_products AS p
+    CROSS JOIN period AS pr
+    LEFT JOIN stock_totals AS st ON st.id_prod = p.id_prod
+    LEFT JOIN sales_totals AS sa ON sa.id_prod = p.id_prod
+    ORDER BY p.nom_prod, p.id_prod;
 $$;
 
 DROP FUNCTION IF EXISTS agent_cfo_products_catalog(text, integer);
@@ -342,7 +430,7 @@ BEGIN
             OR t.nom_cliente ILIKE '%' || p_search || '%'
             OR t.poblacion_cliente ILIKE '%' || p_search || '%'
             OR t.pais_cliente ILIKE '%' || p_search || '%'
-        ORDER BY t.id_cliente LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_cliente LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'proveedores_compo' THEN
         RETURN QUERY
@@ -351,7 +439,7 @@ BEGIN
             OR t.nom_prov_compo ILIKE '%' || p_search || '%'
             OR t.poblacion_prov_compo ILIKE '%' || p_search || '%'
             OR t.pais_prov_compo ILIKE '%' || p_search || '%'
-        ORDER BY t.id_prov_compo LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_prov_compo LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'proveedores_serv' THEN
         RETURN QUERY
@@ -360,7 +448,7 @@ BEGIN
             OR t.nom_pro_serv ILIKE '%' || p_search || '%'
             OR t.poblacio_pro_serv ILIKE '%' || p_search || '%'
             OR t.pais_pro_serv ILIKE '%' || p_search || '%'
-        ORDER BY t.id_pro_serv LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_pro_serv LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'componentes' THEN
         RETURN QUERY
@@ -369,7 +457,7 @@ BEGIN
             OR t.nom_compo ILIKE '%' || p_search || '%'
             OR t.desc_compo ILIKE '%' || p_search || '%'
             OR t.precio_compo::text ILIKE '%' || p_search || '%'
-        ORDER BY t.id_compo LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_compo LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'almacen' THEN
         RETURN QUERY
@@ -378,7 +466,7 @@ BEGIN
             OR t.nom_alm ILIKE '%' || p_search || '%'
             OR t.poblacion_alm ILIKE '%' || p_search || '%'
             OR t.pais_alm ILIKE '%' || p_search || '%'
-        ORDER BY t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'stock_prod' THEN
         RETURN QUERY
@@ -386,7 +474,7 @@ BEGIN
         WHERE p_search IS NULL OR t.id_prod ILIKE '%' || p_search || '%'
             OR t.id_alm ILIKE '%' || p_search || '%'
             OR t.unidades::text ILIKE '%' || p_search || '%'
-        ORDER BY t.id_prod, t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_prod, t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'stock_compo' THEN
         RETURN QUERY
@@ -394,7 +482,7 @@ BEGIN
         WHERE p_search IS NULL OR t.id_compo ILIKE '%' || p_search || '%'
             OR t.id_alm ILIKE '%' || p_search || '%'
             OR t.unidades::text ILIKE '%' || p_search || '%'
-        ORDER BY t.id_compo, t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_compo, t.id_alm LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'ventas' THEN
         RETURN QUERY
@@ -405,7 +493,7 @@ BEGIN
           AND (p_start_date IS NULL OR t.fecha_venta >= p_start_date)
           AND (p_end_date IS NULL OR t.fecha_venta <= p_end_date)
         ORDER BY t.fecha_venta DESC, t.id_venta
-        LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'compras' THEN
         RETURN QUERY
@@ -416,7 +504,7 @@ BEGIN
           AND (p_start_date IS NULL OR t.fecha_compra >= p_start_date)
           AND (p_end_date IS NULL OR t.fecha_compra <= p_end_date)
         ORDER BY t.fecha_compra DESC, t.id_compra
-        LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'estados_intervencion' THEN
         RETURN QUERY
@@ -424,7 +512,7 @@ BEGIN
         WHERE p_search IS NULL OR t.id_estado ILIKE '%' || p_search || '%'
             OR t.nom_estado ILIKE '%' || p_search || '%'
             OR t.desc_estado ILIKE '%' || p_search || '%'
-        ORDER BY t.id_estado LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_estado LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'servicios_intervencion' THEN
         RETURN QUERY
@@ -434,7 +522,7 @@ BEGIN
             OR t.desc_servicio ILIKE '%' || p_search || '%'
             OR t.coste_servicio_prov::text ILIKE '%' || p_search || '%'
             OR t.ingreso_servicio_cli::text ILIKE '%' || p_search || '%'
-        ORDER BY t.id_servicio LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_servicio LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'establecimientos' THEN
         RETURN QUERY
@@ -443,7 +531,7 @@ BEGIN
             OR t.establecimiento ILIKE '%' || p_search || '%'
             OR t.poblacion_establecimiento ILIKE '%' || p_search || '%'
             OR t.pais_establecimiento ILIKE '%' || p_search || '%'
-        ORDER BY t.id_establecimiento LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        ORDER BY t.id_establecimiento LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSIF p_table = 'intervenciones' THEN
         RETURN QUERY
@@ -458,7 +546,7 @@ BEGIN
           AND (p_start_date IS NULL OR t.fecha_int >= p_start_date)
           AND (p_end_date IS NULL OR t.fecha_int <= p_end_date)
         ORDER BY t.fecha_int DESC, t.id_int
-        LIMIT LEAST(GREATEST(p_limit, 1), 10)
+        LIMIT LEAST(GREATEST(p_limit, 1), 100)
         OFFSET GREATEST(p_offset, 0);
     ELSE
         RAISE EXCEPTION 'Unsupported table for CFO agent';
@@ -584,6 +672,116 @@ BEGIN
 END;
 $$;
 
+CREATE INDEX IF NOT EXISTS idx_ventas_cliente_fecha_venta
+    ON ventas (id_cliente, fecha_venta DESC, id_venta);
+
+CREATE OR REPLACE FUNCTION agent_cfo_find_customers(
+    p_search text,
+    p_limit integer DEFAULT 5
+)
+RETURNS TABLE (
+    id_cliente varchar,
+    nom_cliente varchar,
+    exact_match boolean,
+    exact_match_count bigint,
+    match_count bigint
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    normalized_search text := btrim(p_search);
+    escaped_search text;
+BEGIN
+    IF normalized_search IS NULL OR normalized_search = '' THEN
+        RAISE EXCEPTION 'Customer search term must not be empty';
+    END IF;
+
+    escaped_search := replace(
+        replace(
+            replace(normalized_search, E'\\', E'\\\\'),
+            '%',
+            E'\\%'
+        ),
+        '_',
+        E'\\_'
+    );
+
+    RETURN QUERY
+    WITH candidates AS (
+        SELECT
+            c.id_cliente,
+            c.nom_cliente,
+            lower(btrim(c.nom_cliente)) = lower(normalized_search) AS is_exact
+        FROM clientes AS c
+        WHERE c.nom_cliente ILIKE '%' || escaped_search || '%' ESCAPE E'\\'
+    )
+    SELECT
+        candidate.id_cliente,
+        candidate.nom_cliente,
+        candidate.is_exact,
+        count(*) FILTER (WHERE candidate.is_exact) OVER (),
+        count(*) OVER ()
+    FROM candidates AS candidate
+    ORDER BY candidate.is_exact DESC, candidate.nom_cliente, candidate.id_cliente
+    LIMIT LEAST(GREATEST(p_limit, 1), 10);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION agent_cfo_customer_sales(
+    p_customer_id varchar,
+    p_start_date date DEFAULT NULL,
+    p_end_date date DEFAULT NULL,
+    p_limit integer DEFAULT 10,
+    p_offset integer DEFAULT 0
+)
+RETURNS TABLE (
+    id_venta varchar,
+    id_cliente varchar,
+    nom_cliente varchar,
+    id_prod varchar,
+    nom_prod varchar,
+    unidades integer,
+    precio_unidad numeric,
+    total_venta numeric,
+    fecha_venta date
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+BEGIN
+    IF p_customer_id IS NULL OR btrim(p_customer_id) = '' THEN
+        RAISE EXCEPTION 'Customer ID must not be empty';
+    END IF;
+    IF p_start_date IS NOT NULL
+       AND p_end_date IS NOT NULL
+       AND p_start_date > p_end_date THEN
+        RAISE EXCEPTION 'start_date must not be after end_date';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        v.id_venta,
+        v.id_cliente,
+        c.nom_cliente,
+        v.id_prod,
+        p.nom_prod,
+        v.unidades,
+        v.precio_unidad,
+        v.total_venta,
+        v.fecha_venta
+    FROM ventas AS v
+    JOIN clientes AS c ON c.id_cliente = v.id_cliente
+    LEFT JOIN productos AS p ON p.id_prod = v.id_prod
+    WHERE v.id_cliente = p_customer_id
+      AND (p_start_date IS NULL OR v.fecha_venta >= p_start_date)
+      AND (p_end_date IS NULL OR v.fecha_venta <= p_end_date)
+    ORDER BY v.fecha_venta DESC, v.id_venta
+    LIMIT LEAST(GREATEST(p_limit, 1), 100)
+    OFFSET GREATEST(p_offset, 0);
+END;
+$$;
+
 REVOKE ALL ON FUNCTION match_document_chunks(vector, integer)
     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION match_document_chunks_filtered(vector, integer, text, integer)
@@ -594,6 +792,8 @@ REVOKE ALL ON FUNCTION agent_cfo_purchases_report(date, date, text, text, text, 
     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION agent_cfo_stock_report(text, text, text, integer, integer)
     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION agent_cfo_stock_coverage_report(text)
+    FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION agent_cfo_products_catalog(text, integer, integer)
     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION agent_cfo_interventions_report(text, date, date, integer)
@@ -601,6 +801,10 @@ REVOKE ALL ON FUNCTION agent_cfo_interventions_report(text, date, date, integer)
 REVOKE ALL ON FUNCTION agent_cfo_table_read(text, text, date, date, integer, integer)
     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION agent_cfo_table_count(text, text, date, date)
+    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION agent_cfo_find_customers(text, integer)
+    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION agent_cfo_customer_sales(varchar, date, date, integer, integer)
     FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION match_document_chunks(vector, integer) TO service_role;
@@ -612,6 +816,8 @@ GRANT EXECUTE ON FUNCTION agent_cfo_purchases_report(date, date, text, text, tex
     TO service_role;
 GRANT EXECUTE ON FUNCTION agent_cfo_stock_report(text, text, text, integer, integer)
     TO service_role;
+GRANT EXECUTE ON FUNCTION agent_cfo_stock_coverage_report(text)
+    TO service_role;
 GRANT EXECUTE ON FUNCTION agent_cfo_products_catalog(text, integer, integer)
     TO service_role;
 GRANT EXECUTE ON FUNCTION agent_cfo_interventions_report(text, date, date, integer)
@@ -619,4 +825,8 @@ GRANT EXECUTE ON FUNCTION agent_cfo_interventions_report(text, date, date, integ
 GRANT EXECUTE ON FUNCTION agent_cfo_table_read(text, text, date, date, integer, integer)
     TO service_role;
 GRANT EXECUTE ON FUNCTION agent_cfo_table_count(text, text, date, date)
+    TO service_role;
+GRANT EXECUTE ON FUNCTION agent_cfo_find_customers(text, integer)
+    TO service_role;
+GRANT EXECUTE ON FUNCTION agent_cfo_customer_sales(varchar, date, date, integer, integer)
     TO service_role;

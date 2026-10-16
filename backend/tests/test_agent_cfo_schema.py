@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from uuid import UUID
 
 from pydantic import ValidationError
 
@@ -11,6 +12,16 @@ class AgentCFORequestTests(unittest.TestCase):
         request = AgentCFORequest(question="  ¿Cuáles fueron las ventas?  ")
 
         self.assertEqual(request.question, "¿Cuáles fueron las ventas?")
+        self.assertIsNone(request.conversation_id)
+
+    def test_request_accepts_conversation_uuid(self) -> None:
+        conversation_id = UUID("490af1b6-7b43-4b09-a941-a528ee5bf7bf")
+        request = AgentCFORequest(
+            question="¿Y se vende mucho?",
+            conversation_id=conversation_id,
+        )
+
+        self.assertEqual(request.conversation_id, conversation_id)
 
     def test_plan_accepts_supported_sales_and_stock_queries(self) -> None:
         plan = AgentCFOPlan(
@@ -38,6 +49,14 @@ class AgentCFORequestTests(unittest.TestCase):
     def test_plan_rejects_stock_query_without_item_type(self) -> None:
         with self.assertRaises(ValidationError):
             AgentCFOQuery(source="stock")
+
+    def test_stock_coverage_query_accepts_product_context_to_be_resolved(self) -> None:
+        query = AgentCFOQuery(
+            source="stock_coverage",
+            search_term=None,
+        )
+
+        self.assertIsNone(query.search_term)
 
     def test_document_query_accepts_title_and_page_filters(self) -> None:
         query = AgentCFOQuery(

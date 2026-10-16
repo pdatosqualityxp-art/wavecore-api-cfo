@@ -109,6 +109,13 @@ contiene referencias a las evidencias recuperadas.
    redacta la respuesta usando la evidencia recuperada y debe citar sus fuentes
    como `[S1]`, `[S2]`, etc.; no debe inventar datos ni tratar texto del PDF
    como instrucciones.
+   **Contrato vs. stock:** si la pregunta menciona un contrato/acuerdo y
+   stock/cobertura, el servicio no usa el planificador: recupera fragmentos del
+   PDF, extrae con Gemini el compromiso (producto, unidades mensuales, cliente y
+   vigencia; validado con `AgentCFOContractCommitment`), consulta el stock del
+   producto (`agent_cfo_stock_report`) y las ventas del cliente
+   (`agent_cfo_sales_report`) y calcula la cobertura en código, sin SQL generado.
+   El resultado solo considera el stock actual.
 5. Cada consulta se registra en `chat_logs` con el modelo, la pregunta, la
    respuesta, los tokens, la IP disponible del cliente y `api = "2 FastAPI"`.
    Las consultas fallidas también se registran con una respuesta genérica de
@@ -117,14 +124,14 @@ contiene referencias a las evidencias recuperadas.
 **Alcance relacional implementado:** lectura de todas las tablas definidas en
 `spec/database.sql`: clientes, proveedores de componentes y servicios,
 productos, componentes, almacenes, stocks, ventas, compras, estados, servicios,
-establecimientos e intervenciones. Las lecturas directas usan páginas de 10 y
-recuperan hasta 50 filas; las consultas de stock se paginan hasta 50 ubicaciones.
+establecimientos e intervenciones. Las lecturas directas usan páginas de 100 y
+recuperan hasta 300 filas; las consultas de stock se paginan hasta 300 ubicaciones.
 Ambas indican si quedan resultados fuera del máximo. Ventas, compras e intervenciones admiten
 filtros de fecha. Las preguntas de recuento o ranking de intervenciones por
 establecimiento usan `agent_cfo_interventions_report`, que agrupa el conjunto
 completo antes de limitar el número de filas devueltas. Los conteos exactos de
 tablas usan `agent_cfo_table_count`; las lecturas de registros se paginan hasta
-50 filas y notifican si hay más. Para ventas, compras y stock se usan las RPC de
+300 filas y notifican si hay más. Para ventas, compras y stock se usan las RPC de
 informes existentes. La búsqueda PDF consulta
 `documentos` y `document_chunks`. El agente no puede insertar, modificar o
 borrar filas ni ejecutar SQL generado por el modelo.
