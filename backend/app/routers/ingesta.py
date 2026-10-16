@@ -2,9 +2,10 @@ from datetime import date
 from uuid import uuid4
 
 import fitz
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
+from app.core.auth import get_registered_user
 from app.services.pdf_service import extract_pdf_chunks
 from app.services.storage_service import upload_pdf
 from app.services.vector_service import (
@@ -13,7 +14,11 @@ from app.services.vector_service import (
 )
 
 
-router = APIRouter(prefix="/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/documents",
+    tags=["documents"],
+    dependencies=[Depends(get_registered_user)],
+)
 
 
 @router.post("/ingest", status_code=201)

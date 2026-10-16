@@ -1,13 +1,18 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.core.auth import get_current_user
 from app.schemas.agent_cfo import AgentCFORequest, AgentCFOResponse
 from app.services.agent_cfo_service import AgentCFOServiceError, answer_question
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/agent_cfo", tags=["agent_cfo"])
+router = APIRouter(
+    prefix="/agent_cfo",
+    tags=["agent_cfo"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("", response_model=AgentCFOResponse)

@@ -135,6 +135,12 @@ de conversación a una instalación existente, consulta
 
 ## Configuración para producción
 
-El CORS actual permite peticiones desde cualquier origen para facilitar el
-desarrollo. Antes de desplegar, limita `allow_origins` en `backend/main.py` a los
-dominios del frontend.
+Configura `CORS_ALLOWED_ORIGINS` como un array JSON con los orígenes exactos de
+los frontends autorizados, por ejemplo
+`CORS_ALLOWED_ORIGINS=["https://cfo.example.com"]`. Incluye protocolo y puerto
+si corresponde; no incluyas rutas. La lista está vacía por defecto, por lo que
+el acceso desde navegadores de otros orígenes queda bloqueado hasta configurarla.
+No uses `*`. CORS no autentica usuarios ni reemplaza controles de acceso; los
+endpoints siguen requiriendo el Bearer token definido por la API. El middleware
+solo habilita `POST`, las cabeceras `Authorization` y `Content-Type`, y no admite
+credenciales de navegador.

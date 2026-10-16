@@ -25,6 +25,7 @@ ingesta.
 ```text
 backend/app/
 ├── core/
+│   ├── auth.py
 │   └── config.py
 ├── routers/
 │   ├── ingesta.py
@@ -140,8 +141,8 @@ borrar filas ni ejecutar SQL generado por el modelo.
 tablas base. Vuelve a aplicar el archivo actualizado para habilitar la
 paginación y los conteos de tablas. Las RPC están limitadas a resultados de
 lectura y concedidas a `service_role`; el servicio usa
-`SUPABASE_SERVICE_ROLE_KEY`. El acceso HTTP al agente se considera protegido
-fuera de esta API, según la decisión del proyecto. La tabla `chat_logs` también
+`SUPABASE_SERVICE_ROLE_KEY`. El acceso HTTP exige `Authorization: Bearer
+<access_token>` de una sesión de Supabase Auth (ver sección 5). La tabla `chat_logs` también
 debe existir para que pueda completarse una petición y registrarse su resultado.
 
 ## 5. Estándares de Código
@@ -159,6 +160,13 @@ debe existir para que pueda completarse una petición y registrarse su resultado
   registrar routers.
 - Mantener la ingesta y el agente como funciones separadas: cambios en una no
   deben duplicar ni trasladar la lógica propia de la otra.
+- **Autenticación:** ambos routers dependen de `backend/app/core/auth.py`, que
+  valida el `access_token` de Supabase con `auth.get_user`. El agente
+  (`/api/agent_cfo`) acepta cualquier sesión válida, incluidas las anónimas
+  (invitados); la ingesta (`/api/documents/ingest`) solo admite usuarios
+  registrados (HTTP 403 para invitados). Sin token o con token inválido, HTTP
+  401. Las consultas siguen usando `SUPABASE_SERVICE_ROLE_KEY`, por lo que el
+  token controla el acceso al endpoint, no aplica RLS por usuario.
 
 ## 6. Esquema de datos de documentos
 

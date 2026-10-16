@@ -37,6 +37,49 @@ class SettingsModelTests(unittest.TestCase):
         self.assertEqual(settings.gemini_agent_model, "custom-agent-model")
         self.assertEqual(settings.gemini_embedding_model, "custom-embedding-model")
 
+    def test_cors_origins_can_be_overridden_by_environment(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CORS_ALLOWED_ORIGINS": (
+                    '["https://cfo.example.com","http://localhost:3000"]'
+                )
+            },
+            clear=True,
+        ):
+            settings = Settings(
+                _env_file=None,
+                supabase_url="http://localhost:54321",
+                supabase_service_role_key="test-service-role-key",
+                gemini_api_key="test-gemini-key",
+            )
+
+        self.assertEqual(
+            settings.cors_allowed_origins,
+            ["https://cfo.example.com", "http://localhost:3000"],
+        )
+
+    def test_cors_origins_are_empty_by_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings(
+                _env_file=None,
+                supabase_url="http://localhost:54321",
+                supabase_service_role_key="test-service-role-key",
+                gemini_api_key="test-gemini-key",
+            )
+
+        self.assertEqual(settings.cors_allowed_origins, [])
+
+    def test_wildcard_cors_origin_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            Settings(
+                _env_file=None,
+                supabase_url="http://localhost:54321",
+                supabase_service_role_key="test-service-role-key",
+                gemini_api_key="test-gemini-key",
+                cors_allowed_origins=["*"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
